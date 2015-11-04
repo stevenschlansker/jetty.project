@@ -25,6 +25,8 @@ import org.eclipse.jetty.alpn.server.ALPNServerConnectionFactory;
 import org.eclipse.jetty.client.HttpClient;
 import org.eclipse.jetty.client.HttpClientTransport;
 import org.eclipse.jetty.client.http.HttpClientTransportOverHTTP;
+import org.eclipse.jetty.fcgi.client.http.HttpClientTransportOverFCGI;
+import org.eclipse.jetty.fcgi.server.ServerFCGIConnectionFactory;
 import org.eclipse.jetty.http2.HTTP2Cipher;
 import org.eclipse.jetty.http2.client.HTTP2Client;
 import org.eclipse.jetty.http2.client.http.HttpClientTransportOverHTTP2;
@@ -39,6 +41,7 @@ import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.server.SslConnectionFactory;
 import org.eclipse.jetty.toolchain.test.TestTracker;
+import org.eclipse.jetty.util.SocketAddressResolver;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.junit.After;
@@ -52,7 +55,7 @@ public abstract class AbstractTest
     @Parameterized.Parameters(name = "transport: {0}")
     public static Object[] parameters() throws Exception
     {
-        return new Object[]{Transport.HTTP, Transport.HTTPS, Transport.H2C, Transport.H2};
+        return Transport.values();
     }
 
     @Rule
@@ -87,10 +90,15 @@ public abstract class AbstractTest
         QueuedThreadPool serverThreads = new QueuedThreadPool();
         serverThreads.setName("server");
         server = new Server(serverThreads);
-        connector = new ServerConnector(server, provideServerConnectionFactory(transport));
+        connector = newServerConnector(server);
         server.addConnector(connector);
         server.setHandler(handler);
         server.start();
+    }
+
+    protected ServerConnector newServerConnector(Server server)
+    {
+        return new ServerConnector(server, provideServerConnectionFactory(transport));
     }
 
     private void startClient() throws Exception
@@ -99,10 +107,11 @@ public abstract class AbstractTest
         clientThreads.setName("client");
         client = new HttpClient(provideClientTransport(transport), sslContextFactory);
         client.setExecutor(clientThreads);
+        client.setSocketAddressResolver(new SocketAddressResolver.Sync());
         client.start();
     }
 
-    private ConnectionFactory[] provideServerConnectionFactory(Transport transport)
+    protected ConnectionFactory[] provideServerConnectionFactory(Transport transport)
     {
         List<ConnectionFactory> result = new ArrayList<>();
         switch (transport)
@@ -139,6 +148,11 @@ public abstract class AbstractTest
                 result.add(h2);
                 break;
             }
+            case FCGI:
+            {
+                result.add(new ServerFCGIConnectionFactory(new HttpConfiguration()));
+                break;
+            }
             default:
             {
                 throw new IllegalArgumentException();
@@ -147,7 +161,7 @@ public abstract class AbstractTest
         return result.toArray(new ConnectionFactory[result.size()]);
     }
 
-    private HttpClientTransport provideClientTransport(Transport transport)
+    protected HttpClientTransport provideClientTransport(Transport transport)
     {
         switch (transport)
         {
@@ -163,6 +177,10 @@ public abstract class AbstractTest
                 http2Client.setSelectors(1);
                 return new HttpClientTransportOverHTTP2(http2Client);
             }
+            case FCGI:
+            {
+                return new HttpClientTransportOverFCGI(1, false, "");
+            }
             default:
             {
                 throw new IllegalArgumentException();
@@ -176,10 +194,27 @@ public abstract class AbstractTest
         {
             case HTTP:
             case H2C:
+            case FCGI:
                 return "http://localhost:" + connector.getLocalPort();
             case HTTPS:
             case H2:
                 return "https://localhost:" + connector.getLocalPort();
+            default:
+                throw new IllegalArgumentException();
+        }
+    }
+
+    protected boolean isTransportSecure()
+    {
+        switch (transport)
+        {
+            case HTTP:
+            case H2C:
+            case FCGI:
+                return false;
+            case HTTPS:
+            case H2:
+                return true;
             default:
                 throw new IllegalArgumentException();
         }
@@ -196,6 +231,6 @@ public abstract class AbstractTest
 
     protected enum Transport
     {
-        HTTP, HTTPS, H2C, H2
+        HTTP, HTTPS, H2C, H2, FCGI
     }
 }

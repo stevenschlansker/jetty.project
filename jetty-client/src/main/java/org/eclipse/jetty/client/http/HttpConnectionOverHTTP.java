@@ -42,8 +42,8 @@ public class HttpConnectionOverHTTP extends AbstractConnection implements Connec
     private static final Logger LOG = Log.getLogger(HttpConnectionOverHTTP.class);
 
     private final AtomicBoolean closed = new AtomicBoolean();
-    private final Promise<Connection> promise;
     private final AtomicInteger sweeps = new AtomicInteger();
+    private final Promise<Connection> promise;
     private final Delegate delegate;
     private final HttpChannelOverHTTP channel;
     private long idleTimeout;
@@ -89,14 +89,7 @@ public class HttpConnectionOverHTTP extends AbstractConnection implements Connec
         fillInterested();
         promise.succeeded(this);
     }
-    
-    @Override
-    public void onClose()
-    {
-        softClose();
-        super.onClose();
-    }
-    
+
     public boolean isClosed()
     {
         return closed.get();

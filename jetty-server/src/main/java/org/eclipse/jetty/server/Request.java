@@ -40,6 +40,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 import javax.servlet.AsyncContext;
 import javax.servlet.AsyncListener;
@@ -161,6 +162,7 @@ public class Request implements HttpServletRequest
     private final HttpInput _input;
 
     private MetaData.Request _metadata;
+    private String _originalURI;
 
     private String _contextPath;
     private String _servletPath;
@@ -1580,6 +1582,14 @@ public class Request implements HttpServletRequest
 
     /* ------------------------------------------------------------ */
     /**
+     * @return Returns the original uri passed in metadata before customization/rewrite
+     */
+    public String getOriginalURI()
+    {
+        return _originalURI;
+    }
+    /* ------------------------------------------------------------ */
+    /**
      * @param uri the URI to set
      */
     public void setHttpURI(HttpURI uri)
@@ -1745,8 +1755,9 @@ public class Request implements HttpServletRequest
      * @param request the Request metadata
      */
     public void setMetaData(org.eclipse.jetty.http.MetaData.Request request)
-    {
+    {        
         _metadata=request;
+        _originalURI=_metadata.getURIString();
         setMethod(request.getMethod());
         HttpURI uri = request.getURI();
 
@@ -1803,6 +1814,7 @@ public class Request implements HttpServletRequest
     protected void recycle()
     {
         _metadata=null;
+        _originalURI=null;
 
         if (_context != null)
             throw new IllegalStateException("Request in context!");
