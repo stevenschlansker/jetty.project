@@ -292,8 +292,8 @@ public class ClientCloseTest
     @Before
     public void startClient() throws Exception
     {
-        client = new WebSocketClient();
-        
+        HttpClient httpClient = new HttpClient(new TestClientTransportOverHTTP(), null);
+        client = new WebSocketClient(httpClient);
         client.start();
     }
 

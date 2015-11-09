@@ -89,7 +89,7 @@ public class WebSocketServerFactory extends ContainerLifeCycle implements WebSoc
     private final WebSocketPolicy defaultPolicy;
     private final EventDriverFactory eventDriverFactory;
     private final ByteBufferPool bufferPool;
-    private final WebSocketExtensionFactory extensionFactory;
+    private WebSocketExtensionFactory extensionFactory;
     private Executor executor;
     private List<SessionFactory> sessionFactories;
     private WebSocketCreator creator;
@@ -125,7 +125,6 @@ public class WebSocketServerFactory extends ContainerLifeCycle implements WebSoc
         this.defaultPolicy = policy;
         this.eventDriverFactory = new EventDriverFactory(defaultPolicy);
         this.bufferPool = bufferPool;
-        this.extensionFactory = new WebSocketExtensionFactory(this);
         
         this.sessionFactories = new ArrayList<>();
         this.sessionFactories.add(new WebSocketSessionFactory(this));
@@ -290,6 +289,9 @@ public class WebSocketServerFactory extends ContainerLifeCycle implements WebSoc
         {
             this.objectFactory = new DecoratedObjectFactory();
         }
+
+        // Needs valid objectFactory
+        this.extensionFactory = new WebSocketExtensionFactory(this);
         
         super.doStart();
     }

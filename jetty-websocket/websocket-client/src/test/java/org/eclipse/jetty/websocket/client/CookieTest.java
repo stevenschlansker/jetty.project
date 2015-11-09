@@ -25,8 +25,10 @@ import java.net.CookieManager;
 import java.net.HttpCookie;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import org.eclipse.jetty.toolchain.test.EventQueue;
 import org.eclipse.jetty.util.log.Log;
@@ -51,17 +53,32 @@ public class CookieTest
     {
         public EventQueue<String> messageQueue = new EventQueue<>();
         public EventQueue<Throwable> errorQueue = new EventQueue<>();
+        private CountDownLatch openLatch = new CountDownLatch(1);
+        
+        @Override
+        public void onWebSocketConnect(Session sess)
+        {
+            openLatch.countDown();
+            super.onWebSocketConnect(sess);
+        }
 
         @Override
         public void onWebSocketText(String message)
         {
+            System.err.printf("onTEXT - %s%n",message);
             messageQueue.add(message);
         }
 
         @Override
         public void onWebSocketError(Throwable cause)
         {
+            System.err.printf("onERROR - %s%n",cause);
             errorQueue.add(cause);
+        }
+
+        public void awaitOpen(int duration, TimeUnit unit) throws InterruptedException
+        {
+            assertTrue("Open Latch", openLatch.await(duration,unit));
         }
     }
 
@@ -164,15 +181,22 @@ public class CookieTest
         serverCookieFrame.setFin(true);
         serverCookieFrame.setPayload(QuoteUtil.join(upgradeRequestCookies,","));
         serverConn.write(serverCookieFrame);
+        serverConn.flush();
 
         // Server closes connection
         serverConn.close(StatusCode.NORMAL);
 
         // Confirm client connect on future
         clientConnectFuture.get(500,TimeUnit.MILLISECONDS);
+        clientSocket.awaitOpen(1,TimeUnit.SECONDS);
 
-        // Wait for client receipt of cookie frame via client websocket
-        clientSocket.messageQueue.awaitEventCount(1,2,TimeUnit.SECONDS);
+        try {
+            // Wait for client receipt of cookie frame via client websocket
+            clientSocket.messageQueue.awaitEventCount(1,2,TimeUnit.SECONDS);
+        } catch(TimeoutException e) {
+            e.printStackTrace(System.err);
+            assertThat("Message Count", clientSocket.messageQueue.size(), is(1));
+        }
 
         String cookies = clientSocket.messageQueue.poll();
         LOG.debug("Cookies seen at server: {}",cookies);

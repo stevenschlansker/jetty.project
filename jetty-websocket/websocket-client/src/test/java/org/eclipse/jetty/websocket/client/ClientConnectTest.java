@@ -130,10 +130,13 @@ public class ClientConnectTest
         connection.upgrade();
 
         Session sess = future.get(500,TimeUnit.MILLISECONDS);
-        sess.close();
+        
+        wsocket.waitForConnected(1, TimeUnit.SECONDS);
         
         assertThat("Connect.UpgradeRequest", wsocket.connectUpgradeRequest, notNullValue());
         assertThat("Connect.UpgradeResponse", wsocket.connectUpgradeResponse, notNullValue());
+        
+        sess.close();
     }
     
     @Test

@@ -295,7 +295,7 @@ public class WebSocketClient extends ContainerLifeCycle implements SessionListen
     @Deprecated
     public Future<Session> connect(Object websocket, URI toUri, ClientUpgradeRequest request, UpgradeListener upgradeListener) throws IOException
     {
-        return connect(websocket,toUri,request,null);
+        return connect(websocket,toUri,request);
     }
 
     public Future<Session> connect(Object websocket, URI toUri, ClientUpgradeRequest request) throws IOException
