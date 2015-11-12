@@ -285,21 +285,35 @@ public class WebSocketClient extends ContainerLifeCycle implements SessionListen
      *            the websocket uri to connect to
      * @param request
      *            the upgrade request information
-     * @param upgradeListener
-     *            does nothing
      * @return the future for the session, available on success of connect
      * @throws IOException
      *             if unable to connect
-     * @deprecated {@link UpgradeListener} no longer supported, no alternative available
      */
-    @Deprecated
-    public Future<Session> connect(Object websocket, URI toUri, ClientUpgradeRequest request, UpgradeListener upgradeListener) throws IOException
-    {
-        return connect(websocket,toUri,request);
-    }
-
     public Future<Session> connect(Object websocket, URI toUri, ClientUpgradeRequest request) throws IOException
     {
+        return connect(websocket,toUri,request,(UpgradeListener)null);
+    }
+    
+    /**
+     * Connect to remote websocket endpoint
+     * 
+     * @param websocket
+     *            the websocket object
+     * @param toUri
+     *            the websocket uri to connect to
+     * @param request
+     *            the upgrade request information
+     * @param upgradeListener
+     *            the upgrade listener
+     * @return the future for the session, available on success of connect
+     * @throws IOException
+     *             if unable to connect
+     */
+    public Future<Session> connect(Object websocket, URI toUri, ClientUpgradeRequest request, UpgradeListener upgradeListener) throws IOException
+    {
+        /* Note: UpgradeListener is used by javax.websocket.ClientEndpointConfig.Configurator
+         * See: org.eclipse.jetty.websocket.jsr356.JsrUpgradeListener
+         */
         if (!isStarted())
         {
             throw new IllegalStateException(WebSocketClient.class.getSimpleName() + "@" + this.hashCode() + " is not started");
@@ -340,6 +354,7 @@ public class WebSocketClient extends ContainerLifeCycle implements SessionListen
         init();
 
         WebSocketUpgradeRequest wsReq = new WebSocketUpgradeRequest(httpClient,request);
+        wsReq.setUpgradeListener(upgradeListener);
         return wsReq.sendAsync();
     }
 

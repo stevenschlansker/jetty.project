@@ -40,12 +40,12 @@ import org.eclipse.jetty.util.thread.ThreadClassLoaderScope;
 import org.eclipse.jetty.websocket.api.BatchMode;
 import org.eclipse.jetty.websocket.api.CloseException;
 import org.eclipse.jetty.websocket.api.CloseStatus;
+import org.eclipse.jetty.websocket.api.UpgradeResponse;
 import org.eclipse.jetty.websocket.api.RemoteEndpoint;
 import org.eclipse.jetty.websocket.api.Session;
 import org.eclipse.jetty.websocket.api.StatusCode;
 import org.eclipse.jetty.websocket.api.SuspendToken;
 import org.eclipse.jetty.websocket.api.UpgradeRequest;
-import org.eclipse.jetty.websocket.api.UpgradeResponse;
 import org.eclipse.jetty.websocket.api.WebSocketBehavior;
 import org.eclipse.jetty.websocket.api.WebSocketException;
 import org.eclipse.jetty.websocket.api.WebSocketPolicy;
@@ -468,10 +468,6 @@ public class WebSocketSession extends ContainerLifeCycle implements Session, Web
                         LOG.ignore(t);
                     }
                 }
-                if(openFuture != null)
-                {
-                    openFuture.complete(this);
-                }
                 break;
         }
     }
@@ -509,6 +505,11 @@ public class WebSocketSession extends ContainerLifeCycle implements Session, Web
             if (LOG.isDebugEnabled())
             {
                 LOG.debug("open -> {}",dump());
+            }
+            
+            if(openFuture != null)
+            {
+                openFuture.complete(this);
             }
         }
         catch (CloseException ce)

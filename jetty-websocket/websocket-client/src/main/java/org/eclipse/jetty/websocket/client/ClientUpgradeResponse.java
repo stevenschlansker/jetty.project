@@ -24,10 +24,11 @@ import java.util.List;
 import org.eclipse.jetty.client.HttpResponse;
 import org.eclipse.jetty.http.HttpField;
 import org.eclipse.jetty.http.HttpFields;
-import org.eclipse.jetty.websocket.api.UpgradeResponse;
+import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.websocket.api.extensions.ExtensionConfig;
+import org.eclipse.jetty.websocket.common.UpgradeResponseAdapter;
 
-public class ClientUpgradeResponse extends UpgradeResponse
+public class ClientUpgradeResponse extends UpgradeResponseAdapter
 {
     private List<ExtensionConfig> extensions;
 
@@ -48,8 +49,10 @@ public class ClientUpgradeResponse extends UpgradeResponse
             addHeader(field.getName(),field.getValue());
         }
 
-        this.extensions = ExtensionConfig.parseEnum(fields.getValues("Sec-WebSocket-Extensions"));
-        setAcceptedSubProtocol(fields.get("Sec-WebSocket-Protocol"));
+        HttpField extensionsField = fields.getField(HttpHeader.SEC_WEBSOCKET_EXTENSIONS);
+        if (extensionsField != null)
+            this.extensions = ExtensionConfig.parseList(extensionsField.getValues());
+        setAcceptedSubProtocol(fields.get(HttpHeader.SEC_WEBSOCKET_SUBPROTOCOL));
     }
     
     @Override

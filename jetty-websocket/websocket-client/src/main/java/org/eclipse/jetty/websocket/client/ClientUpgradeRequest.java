@@ -37,13 +37,13 @@ import org.eclipse.jetty.util.B64Code;
 import org.eclipse.jetty.util.MultiMap;
 import org.eclipse.jetty.util.StringUtil;
 import org.eclipse.jetty.util.UrlEncoded;
-import org.eclipse.jetty.websocket.api.UpgradeRequest;
 import org.eclipse.jetty.websocket.api.extensions.ExtensionConfig;
+import org.eclipse.jetty.websocket.common.UpgradeRequestAdapter;
 
 /**
  * Allowing a generate from a UpgradeRequest
  */
-public class ClientUpgradeRequest extends UpgradeRequest
+public class ClientUpgradeRequest extends UpgradeRequestAdapter
 {
     private static final Set<String> FORBIDDEN_HEADERS;
 
