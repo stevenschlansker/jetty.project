@@ -18,8 +18,9 @@
 
 package org.eclipse.jetty.websocket.server.misbehaving;
 
-import static org.hamcrest.Matchers.*;
-import static org.junit.Assert.*;
+import static org.hamcrest.Matchers.instanceOf;
+import static org.hamcrest.Matchers.is;
+import static org.junit.Assert.assertThat;
 
 import java.util.concurrent.TimeUnit;
 
@@ -29,7 +30,6 @@ import org.eclipse.jetty.websocket.api.StatusCode;
 import org.eclipse.jetty.websocket.common.CloseInfo;
 import org.eclipse.jetty.websocket.common.OpCode;
 import org.eclipse.jetty.websocket.common.WebSocketFrame;
-import org.eclipse.jetty.websocket.common.events.AbstractEventDriver;
 import org.eclipse.jetty.websocket.common.test.BlockheadClient;
 import org.eclipse.jetty.websocket.common.test.IBlockheadClient;
 import org.eclipse.jetty.websocket.server.SimpleServletServer;
@@ -67,7 +67,7 @@ public class MisbehavingClassTest
         {
             client.setProtocols("listener-runtime-connect");
             client.setTimeout(1,TimeUnit.SECONDS);
-            try (StacklessLogging scope = new StacklessLogging(AbstractEventDriver.class))
+            try (StacklessLogging scope = new StacklessLogging(BadSocketsServlet.class))
             {
                 ListenerRuntimeOnConnectSocket socket = badSocketsServlet.listenerRuntimeConnect;
                 socket.reset();
@@ -103,7 +103,7 @@ public class MisbehavingClassTest
         {
             client.setProtocols("annotated-runtime-connect");
             client.setTimeout(1,TimeUnit.SECONDS);
-            try (StacklessLogging scope = new StacklessLogging(AbstractEventDriver.class))
+            try (StacklessLogging scope = new StacklessLogging(BadSocketsServlet.class))
             {
                 AnnotatedRuntimeOnConnectSocket socket = badSocketsServlet.annotatedRuntimeConnect;
                 socket.reset();

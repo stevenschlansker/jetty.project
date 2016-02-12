@@ -64,8 +64,6 @@ import org.eclipse.jetty.websocket.common.LogicalConnection;
 import org.eclipse.jetty.websocket.common.SessionFactory;
 import org.eclipse.jetty.websocket.common.WebSocketSession;
 import org.eclipse.jetty.websocket.common.WebSocketSessionFactory;
-import org.eclipse.jetty.websocket.common.events.EventDriver;
-import org.eclipse.jetty.websocket.common.events.EventDriverFactory;
 import org.eclipse.jetty.websocket.common.extensions.ExtensionStack;
 import org.eclipse.jetty.websocket.common.extensions.WebSocketExtensionFactory;
 import org.eclipse.jetty.websocket.common.io.AbstractWebSocketConnection;
@@ -90,7 +88,6 @@ public class WebSocketServerFactory extends ContainerLifeCycle implements WebSoc
     private final Scheduler scheduler = new ScheduledExecutorScheduler();
     private final String supportedVersions;
     private final WebSocketPolicy defaultPolicy;
-    private final EventDriverFactory eventDriverFactory;
     private final ByteBufferPool bufferPool;
     private final WebSocketExtensionFactory extensionFactory;
     private Executor executor;
@@ -126,7 +123,6 @@ public class WebSocketServerFactory extends ContainerLifeCycle implements WebSoc
         this.registeredSocketClasses = new ArrayList<>();
 
         this.defaultPolicy = policy;
-        this.eventDriverFactory = new EventDriverFactory(defaultPolicy);
         this.bufferPool = bufferPool;
         this.extensionFactory = new WebSocketExtensionFactory(this);
         
@@ -193,8 +189,7 @@ public class WebSocketServerFactory extends ContainerLifeCycle implements WebSoc
             HttpConnection connection = (HttpConnection)request.getAttribute("org.eclipse.jetty.server.HttpConnection");
             
             // Send the upgrade
-            EventDriver driver = eventDriverFactory.wrap(websocketPojo);
-            return upgrade(connection, sockreq, sockresp, driver);
+            return upgrade(connection, sockreq, sockresp, websocketPojo);
         }
         catch (URISyntaxException e)
         {
@@ -234,7 +229,7 @@ public class WebSocketServerFactory extends ContainerLifeCycle implements WebSoc
         return new WebSocketServerFactory(policy, bufferPool);
     }
 
-    private WebSocketSession createSession(URI requestURI, EventDriver websocket, LogicalConnection connection)
+    private WebSocketSession createSession(URI requestURI, Object websocket, LogicalConnection connection)
     {
         if (websocket == null)
         {
@@ -318,11 +313,6 @@ public class WebSocketServerFactory extends ContainerLifeCycle implements WebSoc
     public DecoratedObjectFactory getObjectFactory()
     {
         return objectFactory;
-    }
-
-    public EventDriverFactory getEventDriverFactory()
-    {
-        return eventDriverFactory;
     }
 
     @Override
@@ -500,13 +490,13 @@ public class WebSocketServerFactory extends ContainerLifeCycle implements WebSoc
      * This method will not normally return, but will instead throw a UpgradeConnectionException, to exit HTTP handling and initiate WebSocket handling of the
      * connection.
      *
-     * @param http     the raw http connection
-     * @param request  The request to upgrade
-     * @param response The response to upgrade
-     * @param driver   The websocket handler implementation to use
+     * @param http      the raw http connection
+     * @param request   the request to upgrade
+     * @param response  the response to upgrade
+     * @param websocket the websocket endpoint instance
      * @throws IOException
      */
-    private boolean upgrade(HttpConnection http, ServletUpgradeRequest request, ServletUpgradeResponse response, EventDriver driver) throws IOException
+    private boolean upgrade(HttpConnection http, ServletUpgradeRequest request, ServletUpgradeResponse response, Object websocket) throws IOException
     {
         if (!"websocket".equalsIgnoreCase(request.getHeader("Upgrade")))
         {
@@ -570,6 +560,9 @@ public class WebSocketServerFactory extends ContainerLifeCycle implements WebSoc
             // Use raw extension list from request
             extensionStack.negotiate(request.getExtensions());
         }
+        
+        // Policy
+        WebSocketPolicy policy = getPolicy().clonePolicy();
 
         // Get original HTTP connection
         EndPoint endp = http.getEndPoint();
@@ -578,9 +571,9 @@ public class WebSocketServerFactory extends ContainerLifeCycle implements WebSoc
         ByteBufferPool bufferPool = connector.getByteBufferPool();
 
         // Setup websocket connection
-        AbstractWebSocketConnection wsConnection = new WebSocketServerConnection(endp, executor, scheduler, driver.getPolicy(), bufferPool);
+        AbstractWebSocketConnection wsConnection = new WebSocketServerConnection(endp, executor, scheduler, policy, bufferPool);
 
-        extensionStack.setPolicy(driver.getPolicy());
+        extensionStack.setPolicy(policy);
         extensionStack.configure(wsConnection.getParser());
         extensionStack.configure(wsConnection.getGenerator());
 
@@ -591,8 +584,8 @@ public class WebSocketServerFactory extends ContainerLifeCycle implements WebSoc
         }
 
         // Setup Session
-        WebSocketSession session = createSession(request.getRequestURI(), driver, wsConnection);
-        session.setPolicy(driver.getPolicy());
+        WebSocketSession session = createSession(request.getRequestURI(), websocket, wsConnection);
+        session.setPolicy(policy);
         session.setUpgradeRequest(request);
         // set true negotiated extension list back to response 
         response.setExtensions(extensionStack.getNegotiatedExtensions());

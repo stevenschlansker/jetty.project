@@ -37,8 +37,8 @@ import org.eclipse.jetty.util.log.Logger;
 import org.eclipse.jetty.websocket.api.extensions.ExtensionConfig;
 import org.eclipse.jetty.websocket.api.extensions.ExtensionFactory;
 import org.eclipse.jetty.websocket.common.scopes.WebSocketContainerScope;
+import org.eclipse.jetty.websocket.jsr356.ConfiguredEndpoint;
 import org.eclipse.jetty.websocket.jsr356.JsrExtension;
-import org.eclipse.jetty.websocket.jsr356.endpoints.EndpointInstance;
 import org.eclipse.jetty.websocket.servlet.ServletUpgradeRequest;
 import org.eclipse.jetty.websocket.servlet.ServletUpgradeResponse;
 import org.eclipse.jetty.websocket.servlet.WebSocketCreator;
@@ -156,7 +156,7 @@ public class JsrCreator implements WebSocketCreator
                 // Wrap the config with the path spec information
                 config = new PathParamServerEndpointConfig(containerScope,config,wspathSpec,requestPath);
             }
-            return new EndpointInstance(endpoint,config,metadata);
+            return new ConfiguredEndpoint(endpoint,config);
         }
         catch (InstantiationException e)
         {

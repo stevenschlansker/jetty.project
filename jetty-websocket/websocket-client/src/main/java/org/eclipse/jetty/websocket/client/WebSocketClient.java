@@ -55,8 +55,6 @@ import org.eclipse.jetty.websocket.client.masks.RandomMasker;
 import org.eclipse.jetty.websocket.common.SessionFactory;
 import org.eclipse.jetty.websocket.common.WebSocketSession;
 import org.eclipse.jetty.websocket.common.WebSocketSessionFactory;
-import org.eclipse.jetty.websocket.common.events.EventDriver;
-import org.eclipse.jetty.websocket.common.events.EventDriverFactory;
 import org.eclipse.jetty.websocket.common.extensions.WebSocketExtensionFactory;
 import org.eclipse.jetty.websocket.common.scopes.WebSocketContainerScope;
 
@@ -71,7 +69,6 @@ public class WebSocketClient extends ContainerLifeCycle implements WebSocketCont
     private final SslContextFactory sslContextFactory;
     private final WebSocketExtensionFactory extensionRegistry;
     private boolean daemon = false;
-    private EventDriverFactory eventDriverFactory;
     private SessionFactory sessionFactory;
     private ByteBufferPool bufferPool;
     private Executor executor;
@@ -133,7 +130,6 @@ public class WebSocketClient extends ContainerLifeCycle implements WebSocketCont
         this.extensionRegistry = new WebSocketExtensionFactory(this);
         
         this.masker = new RandomMasker();
-        this.eventDriverFactory = new EventDriverFactory(policy);
         
         addBean(this.executor);
         addBean(this.sslContextFactory);
@@ -197,26 +193,8 @@ public class WebSocketClient extends ContainerLifeCycle implements WebSocketCont
         initializeClient();
         ConnectionManager manager = getConnectionManager();
 
-        // Setup Driver for user provided websocket
-        EventDriver driver = null;
-        if (websocket instanceof EventDriver)
-        {
-            // Use the EventDriver as-is
-            driver = (EventDriver)websocket;
-        }
-        else
-        {
-            // Wrap websocket with appropriate EventDriver
-            driver = eventDriverFactory.wrap(websocket);
-        }
-
-        if (driver == null)
-        {
-            throw new IllegalStateException("Unable to identify as websocket object: " + websocket.getClass().getName());
-        }
-
         // Create the appropriate (physical vs virtual) connection task
-        ConnectPromise promise = manager.connect(this,driver,request);
+        ConnectPromise promise = manager.connect(this,request,websocket);
 
         if (upgradeListener != null)
         {
@@ -342,11 +320,6 @@ public class WebSocketClient extends ContainerLifeCycle implements WebSocketCont
         return cookieStore;
     }
     
-    public EventDriverFactory getEventDriverFactory()
-    {
-        return eventDriverFactory;
-    }
-
     public Executor getExecutor()
     {
         return executor;
@@ -554,11 +527,6 @@ public class WebSocketClient extends ContainerLifeCycle implements WebSocketCont
     public void setDispatchIO(boolean dispatchIO)
     {
         this.dispatchIO = dispatchIO;
-    }
-
-    public void setEventDriverFactory(EventDriverFactory factory)
-    {
-        this.eventDriverFactory = factory;
     }
 
     public void setExecutor(Executor executor)

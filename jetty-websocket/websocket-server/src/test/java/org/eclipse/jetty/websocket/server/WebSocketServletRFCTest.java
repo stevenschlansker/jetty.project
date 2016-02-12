@@ -37,7 +37,6 @@ import org.eclipse.jetty.websocket.common.Generator;
 import org.eclipse.jetty.websocket.common.OpCode;
 import org.eclipse.jetty.websocket.common.Parser;
 import org.eclipse.jetty.websocket.common.WebSocketFrame;
-import org.eclipse.jetty.websocket.common.events.EventDriver;
 import org.eclipse.jetty.websocket.common.frames.BinaryFrame;
 import org.eclipse.jetty.websocket.common.frames.ContinuationFrame;
 import org.eclipse.jetty.websocket.common.frames.TextFrame;
@@ -45,6 +44,7 @@ import org.eclipse.jetty.websocket.common.test.BlockheadClient;
 import org.eclipse.jetty.websocket.common.test.UnitGenerator;
 import org.eclipse.jetty.websocket.common.util.Hex;
 import org.eclipse.jetty.websocket.server.helper.RFCServlet;
+import org.eclipse.jetty.websocket.server.helper.RFCSocket;
 import org.eclipse.jetty.websocket.servlet.WebSocketServlet;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -203,9 +203,6 @@ public class WebSocketServletRFCTest
     @Test
     public void testInternalError() throws Exception
     {
-        // Disable Long Stacks from EventDriver (we know this test will throw an exception)
-        enableStacks(EventDriver.class,false);
-
         BlockheadClient client = new BlockheadClient(server.getServerUri());
         try
         {
@@ -213,7 +210,7 @@ public class WebSocketServletRFCTest
             client.sendStandardRequest();
             client.expectUpgradeResponse();
 
-            try (StacklessLogging context = new StacklessLogging(EventDriver.class))
+            try (StacklessLogging context = new StacklessLogging(RFCSocket.class))
             {
                 // Generate text frame
                 client.write(new TextFrame().setPayload("CRASH"));
@@ -227,8 +224,6 @@ public class WebSocketServletRFCTest
         }
         finally
         {
-            // Reenable Long Stacks from EventDriver
-            enableStacks(EventDriver.class,true);
             client.close();
         }
     }
