@@ -18,8 +18,6 @@
 
 package org.eclipse.jetty.util.resource;
 
-import static org.hamcrest.Matchers.*;
-
 import java.io.File;
 import java.io.IOException;
 import java.net.MalformedURLException;
@@ -31,9 +29,11 @@ import org.eclipse.jetty.toolchain.test.TestingDir;
 import org.eclipse.jetty.util.StringUtil;
 import org.eclipse.jetty.util.UrlEncoded;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
+
+import static org.hamcrest.Matchers.instanceOf;
+import static org.hamcrest.Matchers.is;
 
 public class FileResourceTest
 {
@@ -64,7 +64,39 @@ public class FileResourceTest
         Assert.assertThat("FileResource: " + fileres,fileres.exists(),is(true));
     }
 
-    @Ignore("Cannot get null to be seen by FileResource")
+    @Test
+    public void testExist_Bad1F10() throws Exception
+    {
+        createDummyFile("a.jsp");
+
+        try {
+            // request with null at end
+            URI ref = testdir.getDir().toURI().resolve("a.jsp%1F%10");
+            FileResource fileres = new FileResource(ref.toURL());
+            Assert.assertThat("FileResource exists: " + fileres,fileres.exists(),is(false));
+        } catch(URISyntaxException e) {
+            // Valid path
+        }
+    }
+
+    @Test
+    public void testExist_Bad_AddPath1F10() throws Exception
+    {
+        createDummyFile("a.jsp");
+
+        try {
+            // base resource
+            URI ref = testdir.getDir().toURI();
+            FileResource base = new FileResource(ref.toURL());
+            Resource added = base.addPath("/a.jsp\014\010");
+            Assert.assertThat("Is FileResource", added, instanceOf(FileResource.class));
+            FileResource fileres = (FileResource) added;
+            Assert.assertThat("FileResource exists: " + fileres,fileres.exists(),is(false));
+        } catch(URISyntaxException e) {
+            // Valid path
+        }
+    }
+
     @Test
     public void testExist_BadNull() throws Exception
     {
@@ -73,14 +105,13 @@ public class FileResourceTest
         try {
             // request with null at end
             URI ref = testdir.getDir().toURI().resolve("a.jsp%00");
-            FileResource fileres = new FileResource(decode(ref.toURL()));
+            FileResource fileres = new FileResource(ref.toURL());
             Assert.assertThat("FileResource: " + fileres,fileres.exists(),is(false));
         } catch(URISyntaxException e) {
             // Valid path
         }
     }
 
-    @Ignore("Validation shouldn't be done in FileResource")
     @Test
     public void testExist_BadNullX() throws Exception
     {
@@ -89,7 +120,7 @@ public class FileResourceTest
         try {
             // request with null and x at end
             URI ref = testdir.getDir().toURI().resolve("a.jsp%00x");
-            FileResource fileres = new FileResource(decode(ref.toURL()));
+            FileResource fileres = new FileResource(ref.toURL());
             Assert.assertThat("FileResource: " + fileres,fileres.exists(),is(false));
         } catch(URISyntaxException e) {
             // Valid path
