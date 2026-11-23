@@ -1695,6 +1695,7 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
             public void failed(final Throwable x)
             {
                 boolean failFillInterest;
+                boolean interested;
                 try (AutoLock ignored = _lock.lock())
                 {
                     if (LOG.isDebugEnabled())
@@ -1703,11 +1704,19 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                     lockedDiscardEncryptedOutputBuffer();
 
                     _flushState = FlushState.IDLE;
+                    // Keep the read interest when the connection stays open, so the
+                    // client can read a response that the server sent before the failure.
+                    interested = _fillState == FillState.INTERESTED && shouldPreserveInput(x);
                     failFillInterest = _fillState == FillState.WAIT_FOR_FLUSH ||
-                        _fillState == FillState.INTERESTED;
+                        (_fillState == FillState.INTERESTED && !interested);
                     if (failFillInterest)
                         _fillState = FillState.IDLE;
                 }
+
+                // needsFillInterest() may start this write in place of the read
+                // interest, so register the read here, as succeeded() does.
+                if (interested)
+                    ensureFillInterested();
 
                 getExecutor().execute(() ->
                 {
