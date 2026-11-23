@@ -1703,8 +1703,10 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                     lockedDiscardEncryptedOutputBuffer();
 
                     _flushState = FlushState.IDLE;
+                    // Keep the read interest when the connection stays open, so the
+                    // client can read a response that the server sent before the failure.
                     failFillInterest = _fillState == FillState.WAIT_FOR_FLUSH ||
-                        _fillState == FillState.INTERESTED;
+                        (_fillState == FillState.INTERESTED && !shouldPreserveInput(x));
                     if (failFillInterest)
                         _fillState = FillState.IDLE;
                 }
