@@ -21,12 +21,18 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URI;
 import java.nio.ByteBuffer;
+import java.nio.channels.SelectableChannel;
+import java.nio.channels.SelectionKey;
+import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLSocket;
 
 import org.eclipse.jetty.client.ByteBufferRequestContent;
@@ -42,10 +48,17 @@ import org.eclipse.jetty.client.transport.HttpDestination;
 import org.eclipse.jetty.client.transport.internal.HttpConnectionOverHTTP;
 import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.io.ByteArrayEndPoint;
+import org.eclipse.jetty.io.ClientConnectionFactory;
 import org.eclipse.jetty.io.ClientConnector;
+import org.eclipse.jetty.io.EndPoint;
 import org.eclipse.jetty.io.EofException;
+import org.eclipse.jetty.io.ManagedSelector;
+import org.eclipse.jetty.io.SocketChannelEndPoint;
+import org.eclipse.jetty.io.ssl.SslClientConnectionFactory;
+import org.eclipse.jetty.io.ssl.SslConnection;
 import org.eclipse.jetty.util.Promise;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
+import org.eclipse.jetty.util.thread.Scheduler;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -362,6 +375,354 @@ public class HttpSenderOverHTTPTest
                 if (server.isClosed())
                     return;
             }
+        }
+    }
+
+    @Test
+    @Timeout(20)
+    public void testReceiveResponseOverTlsAfterPendingRequestWriteFailure() throws Exception
+    {
+        try (ServerSocket server = new ServerSocket(0, 50, InetAddress.getLoopbackAddress()))
+        {
+            int port = server.getLocalPort();
+
+            AtomicInteger endPoints = new AtomicInteger();
+            AtomicReference<ControlledEndPoint> endPointRef = new AtomicReference<>();
+            ClientConnector connector = new ClientConnector()
+            {
+                @Override
+                protected EndPoint newEndPoint(SelectableChannel selectable, ManagedSelector selector, SelectionKey selectionKey)
+                {
+                    endPoints.incrementAndGet();
+                    ControlledEndPoint endPoint = new ControlledEndPoint((SocketChannel)selectable, selector, selectionKey, getScheduler());
+                    endPointRef.set(endPoint);
+                    return endPoint;
+                }
+            };
+            SslContextFactory.Client sslContextFactory = new SslContextFactory.Client();
+            sslContextFactory.setKeyStorePath("src/test/resources/keystore.p12");
+            sslContextFactory.setKeyStorePassword("storepwd");
+            sslContextFactory.setEndpointIdentificationAlgorithm(null);
+            connector.setSslContextFactory(sslContextFactory);
+            HttpClient tlsClient = new HttpClient(new HttpClientTransportOverHTTP(connector));
+            tlsClient.start();
+            try
+            {
+                CountDownLatch respondAtOnce = new CountDownLatch(0);
+                CountDownLatch serverClosed = new CountDownLatch(1);
+                SSLContext sslContext = tlsClient.getSslContextFactory().getSslContext();
+                Thread acceptor = new Thread(() -> serveTlsTwoRequests(server, sslContext, port, respondAtOnce, respondAtOnce, serverClosed));
+                acceptor.setDaemon(true);
+                acceptor.start();
+
+                // A first exchange completes the TLS handshake on the connection that the POST reuses.
+                assertEquals(200, tlsClient.newRequest("localhost", port).scheme("https").timeout(5, TimeUnit.SECONDS).send().getStatus());
+                ControlledEndPoint endPoint = endPointRef.get();
+                endPoint.holdReads();
+
+                OutputStreamRequestContent content = new OutputStreamRequestContent("text/plain");
+                InputStreamResponseListener listener = new InputStreamResponseListener();
+                tlsClient.newRequest("localhost", port).scheme("https").method(HttpMethod.POST).body(content).timeout(10, TimeUnit.SECONDS).send(listener);
+                OutputStream output = content.getOutputStream();
+                output.write('x');
+                output.flush();
+
+                // The server sent the response and closed the connection, and the client waits to read the response.
+                assertTrue(serverClosed.await(5, TimeUnit.SECONDS));
+                assertTrue(endPoint.awaitHeldRead(5, TimeUnit.SECONDS));
+
+                // The next write is incomplete, and the write that completes it fails.
+                endPoint.failPendingWrite();
+                assertThrows(IOException.class, () ->
+                {
+                    output.write('y');
+                    output.flush();
+                });
+                assertTrue(endPoint.isPendingWriteFailed());
+
+                endPoint.releaseReads();
+                assertEquals(500, listener.get(5, TimeUnit.SECONDS).getStatus());
+                try (InputStream input = listener.getInputStream())
+                {
+                    assertEquals("nope!", new String(input.readAllBytes(), StandardCharsets.UTF_8));
+                }
+                Result result = listener.await(5, TimeUnit.SECONDS);
+                assertNotNull(result.getRequestFailure());
+                assertNull(result.getResponseFailure());
+                assertEquals(1, endPoints.get());
+            }
+            finally
+            {
+                tlsClient.stop();
+            }
+        }
+    }
+
+    @Test
+    @Timeout(20)
+    public void testReceiveResponseOverTlsAfterFailureOfPendingWriteStartedByRead() throws Exception
+    {
+        try (ServerSocket server = new ServerSocket(0, 50, InetAddress.getLoopbackAddress()))
+        {
+            int port = server.getLocalPort();
+
+            AtomicReference<ControlledEndPoint> endPointRef = new AtomicReference<>();
+            AtomicReference<Runnable> incompleteFlushHook = new AtomicReference<>();
+            ClientConnector connector = new ClientConnector()
+            {
+                @Override
+                protected EndPoint newEndPoint(SelectableChannel selectable, ManagedSelector selector, SelectionKey selectionKey)
+                {
+                    ControlledEndPoint endPoint = new ControlledEndPoint((SocketChannel)selectable, selector, selectionKey, getScheduler());
+                    endPointRef.set(endPoint);
+                    return endPoint;
+                }
+
+                @Override
+                public ClientConnectionFactory newSslClientConnectionFactory(SslContextFactory.Client sslContextFactory, ClientConnectionFactory connectionFactory)
+                {
+                    return new SslClientConnectionFactory(sslContextFactory, getByteBufferPool(), getExecutor(), connectionFactory)
+                    {
+                        @Override
+                        protected SslConnection newSslConnection(EndPoint endPoint, SSLEngine engine)
+                        {
+                            return new SslConnection(getByteBufferPool(), getExecutor(), getSslContextFactory(), endPoint, engine, isDirectBuffersForEncryption(), isDirectBuffersForDecryption())
+                            {
+                                @Override
+                                protected SslEndPoint newSslEndPoint()
+                                {
+                                    return new SslEndPoint()
+                                    {
+                                        @Override
+                                        protected void onIncompleteFlush()
+                                        {
+                                            Runnable hook = incompleteFlushHook.getAndSet(null);
+                                            if (hook != null)
+                                                hook.run();
+                                            super.onIncompleteFlush();
+                                        }
+                                    };
+                                }
+                            };
+                        }
+                    };
+                }
+            };
+            SslContextFactory.Client sslContextFactory = new SslContextFactory.Client();
+            sslContextFactory.setKeyStorePath("src/test/resources/keystore.p12");
+            sslContextFactory.setKeyStorePassword("storepwd");
+            sslContextFactory.setEndpointIdentificationAlgorithm(null);
+            connector.setSslContextFactory(sslContextFactory);
+            HttpClient tlsClient = new HttpClient(new HttpClientTransportOverHTTP(connector));
+            tlsClient.setIdleTimeout(5000);
+            tlsClient.start();
+            try
+            {
+                CountDownLatch respond = new CountDownLatch(1);
+                CountDownLatch sendContent = new CountDownLatch(1);
+                CountDownLatch serverClosed = new CountDownLatch(1);
+                SSLContext sslContext = tlsClient.getSslContextFactory().getSslContext();
+                Thread acceptor = new Thread(() -> serveTlsTwoRequests(server, sslContext, port, respond, sendContent, serverClosed));
+                acceptor.setDaemon(true);
+                acceptor.start();
+
+                // A first exchange completes the TLS handshake on the connection that the POST reuses.
+                assertEquals(200, tlsClient.newRequest("localhost", port).scheme("https").timeout(5, TimeUnit.SECONDS).send().getStatus());
+                ControlledEndPoint endPoint = endPointRef.get();
+
+                OutputStreamRequestContent content = new OutputStreamRequestContent("text/plain");
+                InputStreamResponseListener listener = new InputStreamResponseListener();
+                tlsClient.newRequest("localhost", port).scheme("https").method(HttpMethod.POST).body(content).send(listener);
+                OutputStream output = content.getOutputStream();
+                output.write('x');
+                output.flush();
+
+                // The next write is incomplete, and the hook holds it before onIncompleteFlush().
+                // Meanwhile, the server sends the response headers, and the client registers a read
+                // for the content. The read finds the pending TLS output, writes it in place of a
+                // read interest, and that write fails.
+                CountDownLatch readStartedWrite = new CountDownLatch(1);
+                incompleteFlushHook.set(() ->
+                {
+                    respond.countDown();
+                    await().atMost(5, TimeUnit.SECONDS).until(endPoint::isPendingWriteFailed);
+                    readStartedWrite.countDown();
+                });
+                endPoint.failPendingWrite();
+                assertThrows(IOException.class, () ->
+                {
+                    output.write('y');
+                    output.flush();
+                });
+                assertTrue(readStartedWrite.await(5, TimeUnit.SECONDS));
+                assertEquals(500, listener.get(5, TimeUnit.SECONDS).getStatus());
+
+                // The content arrives after the write failure, so only a registered read
+                // reads it before the idle timeout fails the call.
+                sendContent.countDown();
+                try (InputStream input = listener.getInputStream())
+                {
+                    assertEquals("nope!", new String(input.readAllBytes(), StandardCharsets.UTF_8));
+                }
+                Result result = listener.await(5, TimeUnit.SECONDS);
+                assertNotNull(result.getRequestFailure());
+                assertNull(result.getResponseFailure());
+            }
+            finally
+            {
+                tlsClient.stop();
+            }
+        }
+    }
+
+    private static void serveTlsTwoRequests(ServerSocket server, SSLContext sslContext, int port, CountDownLatch respond, CountDownLatch sendContent, CountDownLatch serverClosed)
+    {
+        // The server reads every byte that the client sent, so the close sends a FIN and not a reset.
+        try (Socket socket = server.accept())
+        {
+            SSLSocket sslSocket = (SSLSocket)sslContext.getSocketFactory().createSocket(socket, "localhost", port, false);
+            sslSocket.setUseClientMode(false);
+            sslSocket.setSoTimeout(15_000);
+            sslSocket.startHandshake();
+            InputStream input = sslSocket.getInputStream();
+            OutputStream output = sslSocket.getOutputStream();
+            if (!readUntil(input, "\r\n\r\n"))
+                return;
+            output.write("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+            output.flush();
+            // The client writes the CRLF after the chunk data with the next chunk.
+            if (!readUntil(input, "\r\n\r\n1\r\nx") || !respond.await(10, TimeUnit.SECONDS))
+                return;
+            String headers = "HTTP/1.1 500 Server Error\r\n" +
+                "Content-Type: text/plain\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "Connection: close\r\n" +
+                "\r\n";
+            output.write(headers.getBytes(StandardCharsets.US_ASCII));
+            output.flush();
+            if (!sendContent.await(10, TimeUnit.SECONDS))
+                return;
+            output.write("5\r\nnope!\r\n0\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+            output.flush();
+            // Send close_notify, then close the socket. SSLSocket.close() waits for the close_notify of the client.
+            sslSocket.shutdownOutput();
+        }
+        catch (IOException | InterruptedException ignored)
+        {
+            // The test fails on the client side.
+        }
+        finally
+        {
+            serverClosed.countDown();
+        }
+    }
+
+    private static boolean readUntil(InputStream input, String end) throws IOException
+    {
+        StringBuilder received = new StringBuilder();
+        while (!received.toString().endsWith(end))
+        {
+            int read = input.read();
+            if (read < 0)
+                return false;
+            received.append((char)read);
+        }
+        return true;
+    }
+
+    /**
+     * <p>A network {@link EndPoint} that holds reads and fails a pending write on demand.</p>
+     * <p>After {@link #failPendingWrite()}, the first flush is incomplete, and every later flush fails,
+     * as on a connection that the peer closed.</p>
+     */
+    private static class ControlledEndPoint extends SocketChannelEndPoint
+    {
+        private final Object lock = new Object();
+        private final CountDownLatch heldRead = new CountDownLatch(1);
+        private final AtomicInteger writeStep = new AtomicInteger();
+        private final AtomicBoolean pendingWriteFailed = new AtomicBoolean();
+        private boolean holdReads;
+        private boolean readInterestHeld;
+
+        private ControlledEndPoint(SocketChannel channel, ManagedSelector selector, SelectionKey key, Scheduler scheduler)
+        {
+            super(channel, selector, key, scheduler);
+        }
+
+        private void holdReads()
+        {
+            synchronized (lock)
+            {
+                holdReads = true;
+            }
+        }
+
+        private void releaseReads()
+        {
+            boolean needsFillInterest;
+            synchronized (lock)
+            {
+                holdReads = false;
+                needsFillInterest = readInterestHeld;
+                readInterestHeld = false;
+            }
+            if (needsFillInterest)
+                super.needsFillInterest();
+        }
+
+        private boolean awaitHeldRead(long timeout, TimeUnit unit) throws InterruptedException
+        {
+            return heldRead.await(timeout, unit);
+        }
+
+        private void failPendingWrite()
+        {
+            writeStep.set(1);
+        }
+
+        private boolean isPendingWriteFailed()
+        {
+            return pendingWriteFailed.get();
+        }
+
+        @Override
+        public int fill(ByteBuffer buffer) throws IOException
+        {
+            synchronized (lock)
+            {
+                if (holdReads)
+                    return 0;
+            }
+            return super.fill(buffer);
+        }
+
+        @Override
+        protected void needsFillInterest()
+        {
+            synchronized (lock)
+            {
+                if (holdReads)
+                {
+                    readInterestHeld = true;
+                    heldRead.countDown();
+                    return;
+                }
+            }
+            super.needsFillInterest();
+        }
+
+        @Override
+        public boolean flush(ByteBuffer... buffers) throws IOException
+        {
+            // Report the first flush as incomplete without a write, then fail the flush that completes it.
+            if (writeStep.compareAndSet(1, 2))
+                return false;
+            if (writeStep.get() == 2)
+            {
+                pendingWriteFailed.set(true);
+                throw new EofException("pending write failure");
+            }
+            return super.flush(buffers);
         }
     }
 
